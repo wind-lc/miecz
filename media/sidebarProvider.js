@@ -48,7 +48,16 @@
    */
   const updateLog = () => {
     document.querySelector('.proxy-log-name').innerText = logPort === null ? '' : `[${logPort}]`;
-    document.querySelector('.log-container').innerHTML = proxyList.find(el => el.port === logPort)?.log || '';
+    const list = proxyList.find(el => el.port === logPort)?.log || [];
+    const box = document.querySelector('.log-container');
+    const esc = (s) => String(s || '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const html = (Array.isArray(list) ? list : [String(list || '')]).map((line) => {
+      const match = line.match(/^\[(\w+)\](.*)$/);
+      const method = match ? match[1] : '';
+      const rest = match ? match[2].trim() : line;
+      return `<div class="log-item"><span class="method">${esc(method)}</span><span class="log-text">${esc(rest)}</span></div>`;
+    }).join('');
+    box.innerHTML = html;
   };
   /**
    * @description: 更新代理列表
@@ -58,15 +67,16 @@
   const updateProxyList = () => {
     // 列表
     const li = document.querySelector('.proxy-list');
+    const prevScrollTop = li.scrollTop;
     // 代理服务器
     li.innerHTML = '';
     proxyList.forEach(el => {
-      const port = getPort(el.proxy);
-      li.innerHTML += `<li class="${el.status === 'runing' ? 'proxy-run' : ''}">
+      const port = el.port;
+      li.innerHTML += `<li class="${el.status === 'running' ? 'proxy-run' : el.status === 'stopping' ? 'proxy-stopping' : ''}">
                         <p>${port}[${el.name}]</p>
-                        <i title="${el.status === 'runing' ? '停止' : '运行'}">
+                        <i title="${(el.status === 'running' || el.status === 'stopping') ? '停止' : '运行'}">
                           <svg aria-hidden="true" data-status="${el.status}" data-port="${port}">
-                            <use xlink:href="#${el.status === 'runing' ? 'stop' : 'running'}"/>
+                            <use xlink:href="#${(el.status === 'running' || el.status === 'stopping') ? 'stop' : 'running'}"/>
                           </svg>
                         </i>
                         <i title="设置">
@@ -88,22 +98,15 @@
     });
     li.querySelectorAll('li i:nth-of-type(1) svg').forEach(el => {
       el.addEventListener('click', (e) => {
-        if (e.target.dataset.status === 'runing') {
-          // 停止代理服务器
-          vs.postMessage({
-            type: 'stop',
-            value: {
-              port: Number(e.target.dataset.port)
-            }
-          });
+        const status = e.currentTarget.dataset.status;
+        const port = Number(e.currentTarget.dataset.port);
+        if (status === 'stopping') return;
+        if (status === 'running') {
+          proxyList = proxyList.map(item => item.port === port ? { ...item, status: 'stopping' } : item);
+          updateProxyList();
+          vs.postMessage({ type: 'stop', value: { port } });
         } else {
-          // 启动代理服务器
-          vs.postMessage({
-            type: 'runing',
-            value: {
-              port: Number(e.target.dataset.port)
-            }
-          });
+          vs.postMessage({ type: 'running', value: { port } });
         }
       });
     });
@@ -131,6 +134,7 @@
         });
       });
     });
+    li.scrollTop = prevScrollTop;
   };
 
   // 清除日志
@@ -224,7 +228,7 @@
     const tr = document.createElement('tr');
     // 设置行id
     if (item === undefined) {
-      id = getNonce();
+      const id = getNonce();
       item = {
         id,
         checked: false,
@@ -389,7 +393,7 @@
       } else {
         vs.postMessage({
           type: 'error',
-          value: '请选择一个运行的代理地址'
+          value: '请选择一个代理地址再运行'
         });
       }
     }
@@ -423,6 +427,10 @@
       case 'log': {
         const { proxy } = value;
         proxyList = proxy;
+        if (logPort === null) {
+          const lastRunning = [...proxyList].reverse().find(el => el.status === 'running');
+          logPort = (lastRunning || proxyList[proxyList.length - 1] || {}).port ?? null;
+        }
         updateLog();
         break;
       }
@@ -438,8 +446,15 @@
         updateProxyList();
         if (port) {
           logPort = Number(port);
+        } else if (logPort === null) {
+          const lastRunning = [...proxyList].reverse().find(el => el.status === 'running');
+          logPort = (lastRunning || proxyList[proxyList.length - 1] || {}).port ?? null;
         }
         updateLog();
+        break;
+      }
+      case 'error': {
+        clearSpin();
         break;
       }
     }

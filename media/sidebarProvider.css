@@ -2,6 +2,8 @@ html,
 body {
   height: 100%;
   background-color: var(--vscode-editorWidget-background);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
 }
 
 main {
@@ -59,6 +61,22 @@ i>svg>use {
   -webkit-animation: progress-active 2.4s cubic-bezier(.23, 1, .32, 1) infinite;
 }
 
+.proxy-stopping::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--vscode-editorWidget-background);
+  opacity: .4;
+}
+
+.proxy-list li.proxy-stopping i:nth-of-type(1) {
+  opacity: .5;
+  pointer-events: none;
+}
+
 @keyframes progress-active {
   0% {
     width: 0;
@@ -93,10 +111,6 @@ i>svg>use {
   }
 }
 
-.proxy-list li:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
 .proxy-list li p {
   position: relative;
   z-index: 1;
@@ -104,6 +118,7 @@ i>svg>use {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  user-select: none;
 }
 
 .proxy-list li i {
@@ -122,9 +137,10 @@ i>svg>use {
 
 .proxy-list li:hover {
   color: var(--vscode-button-foreground);
+  background: var(--vscode-list-hoverBackground);
 }
 
-.proxy-list li:hover>i svg {
+.proxy-list li>i:hover svg {
   fill: var(--vscode-button-foreground);
 }
 
@@ -134,9 +150,50 @@ i>svg>use {
   overflow-x: hidden;
   overflow-y: auto;
   outline: none;
-  resize: none;
   margin-bottom: 10px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  background-color: var(--vscode-input-background);
+  border: 1px solid var(--vscode-editorWidget-background);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
+/* 选中文本使用 VSCode 编辑器配色 */
+.log-container ::selection,
+.proxy-info ::selection {
+  background: var(--vscode-editor-selectionBackground);
+  color: var(--vscode-editor-foreground, inherit);
+}
+.log-item {
+  color: var(--vscode-input-foreground);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.log-item:hover {
+  background-color: var(--vscode-list-hoverBackground);
+}
+
+.log-item .method {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  width: 64px;
+  text-align: center;
+}
+
+.log-item .log-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
 
 .create-proxy {
   margin-bottom: 10px;
@@ -325,8 +382,17 @@ i>svg>use {
 
 .proxy-table-tbody {
   height: calc(100% - 30px);
-  overflow-y: scroll;
-  width: calc(100% + 10px);
+  overflow-y: auto;
+  width: calc(100% + var(--scrollbar-width, 15px));
+  scrollbar-gutter: stable;
+}
+
+/* 固定滚动条宽度，确保表头与表体列对齐 */
+.proxy-table-tbody::-webkit-scrollbar {
+  width: var(--scrollbar-width, 15px);
+}
+.proxy-table-thead {
+  padding-right: var(--scrollbar-width, 15px);
 }
 
 .proxy-table-tbody tr:first-of-type td {

@@ -16,9 +16,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   _doc?: vscode.TextDocument;
   public proxyList: IProxyList[] = [];
   constructor(private readonly _extensionUri: vscode.Uri, private readonly globalState: vscode.Memento) { }
-  // 获取端口号
-  private getPort(host: string) {
-    return Number(host.split(':')[host.split(':').length - 1]);
+  /**
+   * 端口占用预检：尝试监听指定端口，若抛错则视为被占用
+   * 避免多个 VSCode 窗口/进程并发启动同一端口导致的体验问题
+   */
+  private async isPortFree(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const net = require('net');
+      const srv = net.createServer().once('error', () => resolve(false)).once('listening', () => { try { srv.close(); } catch {} resolve(true); }).listen(port, '127.0.0.1');
+    });
   }
   /**
    * @description: 创建代理服务器
@@ -31,46 +37,56 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     const item = data.value.list.find(el => el.checked);
     const target = item?.target || '';
-    proxy(data.value.port, target, (log: any) => {
-      const { request: { header: { origin, host }, method, url }, target } = log;
-      this.proxyList = this.proxyList.map(el => {
-        if (data.value.port === this.getPort(el.proxy._connectionKey)) {
-          // 保持日志最多一百条
-          if (el.log.length >= 100) {
-            el.log.shift();
+    if (!item || !target) {
+      vscode.window.showErrorMessage('请选择一个代理地址再运行');
+      return;
+    }
+    // 启动前进行端口占用检测，友好提示并防止重复启动
+    this.isPortFree(Number(data.value.port)).then((free) => {
+      if (!free) {
+        vscode.window.showErrorMessage(`端口${data.value.port}已被占用`);
+        this._view?.webview.postMessage({ type: 'error', value: `端口${data.value.port}已被占用` });
+        return;
+      }
+      proxy(data.value.port, target, (log: any) => {
+        const req = log.request || {};
+        const headers = req.header || {};
+        const origin = headers.origin || headers.referer || '';
+        const host = headers.host || '';
+        const method = req.method || log.method || '';
+        const url = req.url || log.url || '';
+        const tgt = log.target || target;
+        this.proxyList = this.proxyList.map(el => {
+          if (data.value.port === el.port) {
+            if (el.log.length >= 100) { el.log.shift(); }
+            el.log.push(`[${method}]${origin || '-'}=>${host || '-'}=>${tgt}${url}`);
           }
-          el.log.push(`[${method}]${origin}=>${host}=>${target}${url}`);
-        }
-        return el;
-      });
-      // 发送日志
-      this._view?.webview.postMessage({
-        type: 'log',
-        value: { proxy: this.getProxyList() }
-      });
-    }).then(({ proxy, info }) => {
-      // 保存代理
-      this.proxyList.push({
-        proxy,
-        log: [],
-        name: item?.name || '',
-        status: 'runing',
-        port: Number(data.value.port),
-        list: data.value.list
-      });
-      // 弹窗提示
-      vscode.window.showInformationMessage(info);
-      this._view?.webview.postMessage({
-        type: 'load',
-        value: { proxy: this.getProxyList(), type: 'create', port: Number(data.value.port) }
-      });
-    }).catch(error => {
-      vscode.window.showErrorMessage(error);
-      this._view?.webview.postMessage({
-        type: 'load',
-        value: { proxy: this.getProxyList(), type: 'create' }
+          return el;
+        });
+        this._view?.webview.postMessage({ type: 'log', value: { proxy: this.getProxyList() } });
+      }).then(({ proxy, info }) => {
+        this.proxyList.push({ proxy, log: [], name: item?.name || '', status: 'running', port: Number(data.value.port), list: data.value.list });
+        vscode.window.showInformationMessage(info);
+        this._view?.webview.postMessage({ type: 'load', value: { proxy: this.getProxyList(), type: 'create', port: Number(data.value.port) } });
+      }).catch(error => {
+        vscode.window.showErrorMessage(error);
+        this._view?.webview.postMessage({ type: 'error', value: error });
+        this._view?.webview.postMessage({ type: 'load', value: { proxy: this.getProxyList(), type: 'create' } });
       });
     });
+  }
+  /**
+   * 关闭所有正在运行的代理服务器，并清空内存与全局缓存
+   * 用于 VSCode 扩展停用时确保端口释放
+   */
+  public async shutdownAll() {
+    for (const el of this.proxyList) {
+      try {
+        await el.proxy.close();
+      } catch {}
+    }
+    this.proxyList = [];
+    this.globalState.update('proxyList', []);
   }
   /**
    * @description: 获取代理服务器列表
@@ -78,28 +94,32 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    * @return {IProxyList[]}
    */
   private getProxyList(update: boolean = true): IProxyList[] {
-    const storage = (this.globalState.get<IProxyList[]>('proxyList') || []).map(el => {
-      el.status = 'stop';
-      return el;
+    const storage = (this.globalState.get<IProxyList[]>('proxyList') || []);
+    const runningMap = new Map<number, IProxyList>();
+    this.proxyList.forEach(el => {
+      el.status = el.proxy && (el.proxy as any).listening ? 'running' : 'stop';
+      runningMap.set(el.port, el);
     });
-    this.proxyList.map(el => {
-      if (el.proxy._handle === null) {
-        el.status = 'stop';
-      } else {
-        el.status = 'runing';
+    const merged: IProxyList[] = storage.map(el => {
+      const run = runningMap.get(el.port);
+      if (run) {
+        return run;
       }
-      return el;
+      return { ...el, status: 'stop' };
     });
-    const list: IProxyList[] = JSON.parse(JSON.stringify(this.proxyList));
-    storage.forEach(el => {
-      if (list.findIndex(item => item.port === el.port) < 0) {
-        list.push(el);
+    this.proxyList.forEach(el => {
+      if (storage.findIndex(s => s.port === el.port) < 0) {
+        merged.push(el);
       }
     });
     if (update) {
-      this.globalState.update('proxyList', list);
+      const persisted = merged.map(el => {
+        const { proxy, ...rest } = (el as any);
+        return rest;
+      });
+      this.globalState.update('proxyList', persisted as any);
     }
-    return list;
+    return merged;
   }
   /**
    * @description: 更新代理服务器
@@ -166,18 +186,29 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           break;
         }
         // 停止代理服务器
-        case 'stop': {
-          const { port } = data.value;
-          this.proxyList[this.proxyList.findIndex(el => el.port === Number(port))].proxy.close();
+      case 'stop': {
+        const { port } = data.value;
+        const i = this.proxyList.findIndex(el => el.port === Number(port));
+        if (i >= 0) {
+          const srv = this.proxyList[i].proxy;
+          if (srv && (srv as any).listening) {
+            try {
+              await new Promise<void>((resolve, reject) => {
+                (srv as any).close((err?: any) => err ? reject(err) : resolve());
+              });
+            } catch {}
+          }
+          (this.proxyList[i] as any).proxy = undefined;
+          this.proxyList[i].status = 'stop';
+          this._view?.webview.postMessage({ type: 'load', value: { proxy: this.getProxyList(), type: 'close' } });
           vscode.window.showInformationMessage(`端口${port}代理服务器已停止`);
-          this._view?.webview.postMessage({
-            type: 'load',
-            value: { proxy: this.getProxyList(), type: 'close' }
-          });
-          break;
+        } else {
+          vscode.window.showErrorMessage(`未找到端口${port}的代理服务器`);
         }
+        break;
+      }
         // 启动代理服务器
-        case 'runing': {
+        case 'running': {
           const { port } = data.value;
           data.value.list = this.getProxyList(false).find(el => Number(el.port) === port)?.list || [];
           this.createProxy(data);
@@ -210,18 +241,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               title: '清空日志'
             }).then((list = []) => {
               if (list.length > 0) {
-                const arr = JSON.parse(JSON.stringify(proxyList.map(el => {
-                  if (list.includes(el.port.toString())) {
-                    el.log = [];
-                  }
-                  return el;
-                })));
-                this.globalState.update('proxyList', arr);
+                // 清空内存中的日志
+                this.proxyList = this.proxyList.map(el => (
+                  list.includes(el.port.toString()) ? { ...el, log: [] } : el
+                ));
+                // 清空持久化存储中的日志
+                const storage = (this.globalState.get<IProxyList[]>('proxyList') || []);
+                const nextStorage = storage.map(el => (
+                  list.includes(el.port.toString()) ? { ...el, log: [] } : el
+                ));
+                this.globalState.update('proxyList', nextStorage);
                 vscode.window.showInformationMessage(`代理服务器${list.join(',')}的日志已清空`);
-                this._view?.webview.postMessage({
-                  type: 'log',
-                  value: { proxy: this.getProxyList() }
-                });
+                this._view?.webview.postMessage({ type: 'log', value: { proxy: this.getProxyList(false) } });
               }
             });
           break;
@@ -235,8 +266,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
     // 当视图的可见性改变时触发的事件
     webviewView.onDidChangeVisibility(() => {
-      // 视图隐藏时 某些事件需要卸载
-      // 视图显示时 某些事件需要重新绑定
+      if ((webviewView as any).visible) {
+        this._view?.webview.postMessage({
+          type: 'load',
+          value: { proxy: this.getProxyList(), type: 'load' }
+        });
+      }
     });
 
   }
@@ -293,7 +328,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           <ul class="proxy-list"></ul>
           <button class="create-proxy">创建代理</button>
           <p class="proxy-title">日志详情<span class="proxy-log-name"></span>:</p>
-          <textarea class="log-container" readonly></textarea>
+          <div class="log-container" role="log"></div>
           <button class="delete-log">清除日志</button>
           <!-- 设置代理服务器 -->
           <div class="proxy-modal">
