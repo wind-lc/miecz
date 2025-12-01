@@ -4,13 +4,13 @@
  * @version: 1.0
  * @Date: 2021-12-17 17:55:27
  * @LastEditTime: 2022-06-24 15:40:55
- * @FilePath: \proxy\README.md
+ * @FilePath: \miecz\README.md
 -->
 
 # MIECZ
 
 [![Visual Studio Marketplace](https://img.shields.io/badge/Visual%20Studio%20Marketplace-v0.1.202206242-brightgreen)](https://marketplace.visualstudio.com/items?itemName=wind-lc.miecz)
-[![passing](https://img.shields.io/badge/Go-passing-brightgreen?logo=github)](https://github.com/wind-lc/proxy)
+[![passing](https://img.shields.io/badge/Go-passing-brightgreen?logo=github)](https://github.com/wind-lc/miecz)
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](./LICENSE)
 
 ## &#x1f4c4;描述(Description)
