@@ -7,7 +7,7 @@
 		"vscode-proxy",
 		"wind-lc"
 	],
-	"version": "0.1.202512011",
+	"version": "0.1.202512012",
 	"publisher": "wind-lc",
 	"engines": {
 		"vscode": "^1.63.0"
@@ -56,7 +56,6 @@
 		"lint": "eslint . --ext .ts,.tsx",
 		"watch": "webpack --mode development --watch --info-verbosity verbose"
 	},
-
 	"devDependencies": {
 		"@types/glob": "^7.1.4",
 		"@types/koa": "^2.13.4",
